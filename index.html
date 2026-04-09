@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AstroPi Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --orange: #d29922; --purple: #bc8cff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 1.4em; }
+  .status { width: 10px; height: 10px; border-radius: 50%; background: var(--red); }
+  .status.connected { background: var(--green); }
+
+  /* Sensor cards */
+  .sensors { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h3 { font-size: 0.85em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+  .reading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .reading .label { color: var(--muted); font-size: 0.9em; }
+  .reading .value { font-size: 1.3em; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .unit { font-size: 0.7em; color: var(--muted); margin-left: 2px; }
+  .sparkline { width: 100%; height: 30px; margin-top: 6px; }
+  .sparkline polyline { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* 3D orientation box (hidden, kept for JS compatibility) */
+  .orientation-3d { width: 200px; height: 200px; margin: 10px auto; position: relative; }
+  .cube { display: none; }
+  .face { display: none; }
+  #model-canvas { width: 100%; height: 100%; display: block; }
+
+  /* Controls section */
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-bottom: 20px; }
+
+  /* LED pixel grid */
+  .led-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; width: fit-content; margin: 10px 0; }
+  .led-pixel { width: 32px; height: 32px; border-radius: 4px; background: #1a1a2e; border: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
+  .led-pixel:hover { opacity: 0.8; border-color: var(--accent); }
+  .led-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+
+  /* Text scroller */
+  .scroll-form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+  .scroll-form input[type="text"] { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 1em; width: 100%; }
+  .color-row { display: flex; gap: 12px; align-items: center; }
+  .color-row label { font-size: 0.85em; color: var(--muted); }
+  .color-row input[type="color"] { width: 36px; height: 28px; border: 1px solid var(--border); border-radius: 4px; background: transparent; cursor: pointer; }
+  .speed-row { display: flex; gap: 8px; align-items: center; }
+  .speed-row label { font-size: 0.85em; color: var(--muted); min-width: 50px; }
+  .speed-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+
+  /* Buttons */
+  .btn { padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 0.9em; transition: all 0.15s; }
+  .btn:hover { background: var(--border); border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn.danger { border-color: var(--red); color: var(--red); }
+  .btn.danger:hover { background: var(--red); color: var(--bg); }
+
+  /* Presets */
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .preset-btn { padding: 10px 18px; border-radius: 8px; font-size: 0.95em; }
+  .preset-btn.active { border-color: var(--green); color: var(--green); }
+
+  /* Filter toggle */
+  .filter-toggle { display: flex; align-items: center; gap: 10px; margin: 10px 0; justify-content: center; }
+  .filter-toggle .label { font-size: 0.8em; color: var(--muted); }
+  .filter-toggle .label.active { color: var(--accent); font-weight: 600; }
+  .toggle-switch { position: relative; width: 44px; height: 24px; cursor: pointer; }
+  .toggle-switch input { display: none; }
+  .toggle-track { position: absolute; inset: 0; background: var(--border); border-radius: 12px; transition: background 0.2s; }
+  .toggle-switch input:checked + .toggle-track { background: var(--accent); }
+  .toggle-thumb { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: var(--text); border-radius: 50%; transition: transform 0.2s; }
+  .toggle-switch input:checked ~ .toggle-thumb { transform: translateX(20px); }
+
+  @media (max-width: 600px) {
+    .led-pixel { width: 28px; height: 28px; }
+    .sensors { grid-template-columns: 1fr; }
+    .controls { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="status" id="status"></div>
+    <h1>AstroPi Sense HAT Dashboard</h1>
+  </header>
+
+  <!-- Sensor readings -->
+  <div class="sensors">
+    <!-- Environmental -->
+    <div class="card">
+      <h3>Environment</h3>
+      <div class="reading"><span class="label">Temperature</span><span class="value" id="temp">--<span class="unit">&deg;C</span></span></div>
+      <svg class="sparkline" id="spark-temp"><polyline stroke="var(--red)"/></svg>
+      <div class="reading"><span class="label">Humidity</span><span class="value" id="humidity">--<span class="unit">%</span></span></div>
+      <svg class="sparkline" id="spark-humidity"><polyline stroke="var(--accent)"/></svg>
+      <div class="reading"><span class="label">Pressure</span><span class="value" id="pressure">--<span class="unit">hPa</span></span></div>
+      <svg class="sparkline" id="spark-pressure"><polyline stroke="var(--orange)"/></svg>
+    </div>
+
+    <!-- Orientation with 3D -->
+    <div class="card">
+      <h3>Orientation</h3>
+      <div class="orientation-3d">
+        <canvas id="model-canvas"></canvas>
+        <div class="cube" id="cube">
+          <div class="face front">Front</div>
+          <div class="face back">Back</div>
+          <div class="face left">Left</div>
+          <div class="face right">Right</div>
+          <div class="face top">Top</div>
+          <div class="face bottom">Bottom</div>
+        </div>
+      </div>
+      <div class="filter-toggle">
+        <span class="label active" id="label-madgwick">Madgwick</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="filter-toggle">
+          <span class="toggle-track"></span>
+          <span class="toggle-thumb"></span>
+        </label>
+        <span class="label" id="label-rtimu">RTIMULib</span>
+      </div>
+      <div class="reading"><span class="label">Pitch</span><span class="value" id="pitch">--<span class="unit">&deg;</span></span></div>
+      <div class="reading"><span class="label">Roll</span><span class="value" id="roll">--<span class="unit">&deg;</span></span></div>
+      <div class="reading"><span class="label">Yaw</span><span class="value" id="yaw">--<span class="unit">&deg;</span></span></div>
+      <pre style="font-size:0.65em;color:var(--muted);margin-top:6px;font-family:monospace;white-space:pre-wrap" id="quat-debug">q: --</pre>
+      <button class="btn" style="margin-top:6px;font-size:0.75em" onclick="send({cmd:'set_filter',mode:'test'})">Test Mode</button>
+    </div>
+
+    <!-- Accelerometer -->
+    <div class="card">
+      <h3>Accelerometer</h3>
+      <div class="reading"><span class="label">X</span><span class="value" id="accel-x">--<span class="unit">G</span></span></div>
+      <div class="reading"><span class="label">Y</span><span class="value" id="accel-y">--<span class="unit">G</span></span></div>
+      <div class="reading"><span class="label">Z</span><span class="value" id="accel-z">--<span class="unit">G</span></span></div>
+      <svg class="sparkline" id="spark-accel"><polyline stroke="var(--green)"/><polyline stroke="var(--red)"/><polyline stroke="var(--accent)"/></svg>
+    </div>
+
+    <!-- Gyroscope -->
+    <div class="card">
+      <h3>Gyroscope</h3>
+      <div class="reading"><span class="label">X</span><span class="value" id="gyro-x">--<span class="unit">rad/s</span></span></div>
+      <div class="reading"><span class="label">Y</span><span class="value" id="gyro-y">--<span class="unit">rad/s</span></span></div>
+      <div class="reading"><span class="label">Z</span><span class="value" id="gyro-z">--<span class="unit">rad/s</span></span></div>
+      <svg class="sparkline" id="spark-gyro"><polyline stroke="var(--purple)"/><polyline stroke="var(--orange)"/><polyline stroke="var(--green)"/></svg>
+    </div>
+
+    <!-- Magnetometer -->
+    <div class="card">
+      <h3>Magnetometer</h3>
+      <div class="reading"><span class="label">X</span><span class="value" id="mag-x">--<span class="unit">&micro;T</span></span></div>
+      <div class="reading"><span class="label">Y</span><span class="value" id="mag-y">--<span class="unit">&micro;T</span></span></div>
+      <div class="reading"><span class="label">Z</span><span class="value" id="mag-z">--<span class="unit">&micro;T</span></span></div>
+      <svg class="sparkline" id="spark-mag"><polyline stroke="var(--accent)"/><polyline stroke="var(--red)"/><polyline stroke="var(--orange)"/></svg>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <!-- LED Pixel Painter -->
+    <div class="card">
+      <h3>LED Pixel Painter</h3>
+      <div class="led-grid" id="led-grid"></div>
+      <div class="led-controls">
+        <label style="color:var(--muted);font-size:0.85em">Color:</label>
+        <input type="color" id="pixel-color" value="#ff4444">
+        <button class="btn danger" onclick="clearMatrix()">Clear</button>
+        <button class="btn" onclick="fillMatrix()">Fill</button>
+      </div>
+    </div>
+
+    <!-- Text Scroller -->
+    <div class="card">
+      <h3>Text Scroller</h3>
+      <div class="scroll-form">
+        <input type="text" id="scroll-text" placeholder="Type a message..." maxlength="100">
+        <div class="color-row">
+          <label>Text:</label>
+          <input type="color" id="text-color" value="#ffffff">
+          <label>Background:</label>
+          <input type="color" id="bg-color" value="#000000">
+        </div>
+        <div class="speed-row">
+          <label>Speed:</label>
+          <input type="range" id="scroll-speed" min="0.02" max="0.2" step="0.01" value="0.08">
+          <span id="speed-val" style="color:var(--muted);font-size:0.85em;min-width:40px">0.08</span>
+        </div>
+        <button class="btn primary" onclick="scrollText()">Send Message</button>
+      </div>
+    </div>
+
+    <!-- Camera -->
+    <div class="card">
+      <h3>Camera</h3>
+      <div style="text-align:center">
+        <img id="camera-img" style="max-width:100%;border-radius:6px;background:var(--bg);min-height:120px" alt="No image">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn" onclick="send({cmd:'camera_grab'})">Grab</button>
+        <button class="btn primary" id="stream-btn" onclick="toggleStream()">Stream</button>
+      </div>
+    </div>
+
+    <!-- Presets -->
+    <div class="card">
+      <h3>Presets</h3>
+      <div class="presets" id="presets">
+        <button class="btn preset-btn" data-preset="rainbow">Rainbow</button>
+        <button class="btn preset-btn" data-preset="heatmap">Heatmap</button>
+        <button class="btn preset-btn" data-preset="snake">Snake</button>
+        <button class="btn preset-btn" data-preset="sparkle">Sparkle</button>
+        <button class="btn preset-btn" data-preset="compass">Compass</button>
+        <button class="btn preset-btn" data-preset="camera">Camera</button>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn danger" onclick="stopPreset()">Stop Preset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── WebSocket ──
+const WS_URL = `ws://${location.hostname}:8081`;
+let ws;
+let reconnectTimer;
+const statusEl = document.getElementById('status');
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => { statusEl.classList.add('connected'); clearTimeout(reconnectTimer); };
+  ws.onclose = () => { statusEl.classList.remove('connected'); reconnectTimer = setTimeout(connect, 2000); };
+  ws.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'sensors') updateSensors(d);
+    if (d.type === 'led_update') updateLedGrid(d.pixels);
+    if (d.type === 'camera_frame') document.getElementById('camera-img').src = 'data:image/jpeg;base64,' + d.data;
+  };
+}
+connect();
+
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+// ── Sparkline history ──
+const HISTORY_LEN = 60;
+const history = {
+  temp: [], humidity: [], pressure: [],
+  'accel-x': [], 'accel-y': [], 'accel-z': [],
+  'gyro-x': [], 'gyro-y': [], 'gyro-z': [],
+  'mag-x': [], 'mag-y': [], 'mag-z': [],
+};
+
+function pushHistory(key, val) {
+  if (!history[key]) history[key] = [];
+  history[key].push(val);
+  if (history[key].length > HISTORY_LEN) history[key].shift();
+}
+
+function drawSparkline(svgId, series) {
+  // series: array of {data: [], polylineIndex: number}
+  const svg = document.getElementById(svgId);
+  if (!svg) return;
+  const w = svg.clientWidth || 260, h = svg.clientHeight || 30;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  const polylines = svg.querySelectorAll('polyline');
+  series.forEach((s, i) => {
+    if (!polylines[i] || s.data.length < 2) return;
+    const min = Math.min(...s.data), max = Math.max(...s.data);
+    const range = max - min || 1;
+    const points = s.data.map((v, j) => {
+      const x = (j / (HISTORY_LEN - 1)) * w;
+      const y = h - 2 - ((v - min) / range) * (h - 4);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    polylines[i].setAttribute('points', points);
+  });
+}
+
+// ── Sensor update ──
+function updateSensors(d) {
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) { const unit = el.querySelector('.unit'); el.textContent = val; if (unit) el.appendChild(unit); }
+  };
+
+  setVal('temp', d.temperature);
+  setVal('humidity', d.humidity);
+  setVal('pressure', d.pressure);
+  setVal('pitch', d.orientation.pitch);
+  setVal('roll', d.orientation.roll);
+  setVal('yaw', d.orientation.yaw);
+  setVal('accel-x', d.accelerometer.x);
+  setVal('accel-y', d.accelerometer.y);
+  setVal('accel-z', d.accelerometer.z);
+  setVal('gyro-x', d.gyroscope.x);
+  setVal('gyro-y', d.gyroscope.y);
+  setVal('gyro-z', d.gyroscope.z);
+  setVal('mag-x', d.magnetometer.x);
+  setVal('mag-y', d.magnetometer.y);
+  setVal('mag-z', d.magnetometer.z);
+
+  // Update filter mode toggle from server state
+  if (d.filter_mode) updateFilterLabel(d.filter_mode);
+  // Debug: show quaternion and matrix
+  if (d.orientation.q) {
+    const q = d.orientation.q;
+    const mx = d.orientation.matrix;
+    document.getElementById('quat-debug').textContent =
+      `q: w=${q[0]} x=${q[1]} y=${q[2]} z=${q[3]}\n` +
+      `m: ${mx.map(v=>v.toFixed(2)).join(', ')}`;
+  }
+
+  // 3D cube — rotation matrix from Madgwick AHRS filter (gyro+accel fusion)
+  // Server sends pre-computed CSS-frame 3x3 rotation matrix. No gimbal lock.
+  const cube = document.getElementById('cube');
+  const m = d.orientation.matrix;
+  if (m) {
+    cube.style.transform = `matrix3d(
+      ${m[0]}, ${m[3]}, ${m[6]}, 0,
+      ${m[1]}, ${m[4]}, ${m[7]}, 0,
+      ${m[2]}, ${m[5]}, ${m[8]}, 0,
+      0, 0, 0, 1
+    )`;
+    // Forward matrix to Three.js model
+    if (window.updateModel) window.updateModel(m);
+  }
+
+  // History
+  pushHistory('temp', d.temperature);
+  pushHistory('humidity', d.humidity);
+  pushHistory('pressure', d.pressure);
+  ['x','y','z'].forEach(a => {
+    pushHistory(`accel-${a}`, d.accelerometer[a]);
+    pushHistory(`gyro-${a}`, d.gyroscope[a]);
+    pushHistory(`mag-${a}`, d.magnetometer[a]);
+  });
+
+  // Sparklines
+  drawSparkline('spark-temp', [{data: history.temp}]);
+  drawSparkline('spark-humidity', [{data: history.humidity}]);
+  drawSparkline('spark-pressure', [{data: history.pressure}]);
+  drawSparkline('spark-accel', [
+    {data: history['accel-x']}, {data: history['accel-y']}, {data: history['accel-z']}
+  ]);
+  drawSparkline('spark-gyro', [
+    {data: history['gyro-x']}, {data: history['gyro-y']}, {data: history['gyro-z']}
+  ]);
+  drawSparkline('spark-mag', [
+    {data: history['mag-x']}, {data: history['mag-y']}, {data: history['mag-z']}
+  ]);
+}
+
+// ── LED Grid ──
+const ledGrid = document.getElementById('led-grid');
+const ledState = Array.from({length: 64}, () => [0, 0, 0]);
+let isDrawing = false;
+
+for (let i = 0; i < 64; i++) {
+  const px = document.createElement('div');
+  px.className = 'led-pixel';
+  px.dataset.idx = i;
+  px.addEventListener('mousedown', (e) => { isDrawing = true; paintPixel(i); e.preventDefault(); });
+  px.addEventListener('mouseenter', () => { if (isDrawing) paintPixel(i); });
+  px.addEventListener('touchstart', (e) => { paintPixel(i); e.preventDefault(); }, {passive: false});
+  px.addEventListener('touchmove', (e) => {
+    const touch = e.touches[0];
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (el && el.classList.contains('led-pixel')) paintPixel(parseInt(el.dataset.idx));
+    e.preventDefault();
+  }, {passive: false});
+  ledGrid.appendChild(px);
+}
+document.addEventListener('mouseup', () => isDrawing = false);
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return [r, g, b];
+}
+
+function paintPixel(idx) {
+  const color = hexToRgb(document.getElementById('pixel-color').value);
+  const x = idx % 8, y = Math.floor(idx / 8);
+  ledState[idx] = color;
+  const px = ledGrid.children[idx];
+  px.style.background = `rgb(${color[0]},${color[1]},${color[2]})`;
+  send({cmd: 'set_pixel', x, y, color});
+}
+
+function clearMatrix() {
+  send({cmd: 'clear'});
+  for (let i = 0; i < 64; i++) {
+    ledState[i] = [0, 0, 0];
+    ledGrid.children[i].style.background = '#1a1a2e';
+  }
+}
+
+function updateLedGrid(pixels) {
+  for (let i = 0; i < 64 && i < pixels.length; i++) {
+    const c = pixels[i];
+    ledState[i] = c;
+    ledGrid.children[i].style.background = `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+}
+
+function fillMatrix() {
+  const color = hexToRgb(document.getElementById('pixel-color').value);
+  const pixels = Array.from({length: 64}, () => [...color]);
+  send({cmd: 'set_pixels', pixels});
+  for (let i = 0; i < 64; i++) {
+    ledState[i] = [...color];
+    ledGrid.children[i].style.background = `rgb(${color[0]},${color[1]},${color[2]})`;
+  }
+}
+
+// ── Text Scroller ──
+const speedSlider = document.getElementById('scroll-speed');
+const speedVal = document.getElementById('speed-val');
+speedSlider.addEventListener('input', () => speedVal.textContent = parseFloat(speedSlider.value).toFixed(2));
+
+function scrollText() {
+  const text = document.getElementById('scroll-text').value;
+  if (!text) return;
+  const color = hexToRgb(document.getElementById('text-color').value);
+  const bg = hexToRgb(document.getElementById('bg-color').value);
+  const speed = parseFloat(speedSlider.value);
+  send({cmd: 'scroll_text', text, color, bg, speed});
+}
+
+document.getElementById('scroll-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') scrollText();
+});
+
+// ── Presets ──
+let activePreset = null;
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const name = btn.dataset.preset;
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activePreset = name;
+    send({cmd: 'preset', name});
+  });
+});
+
+function stopPreset() {
+  activePreset = null;
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  send({cmd: 'stop_preset'});
+}
+
+// ── Filter mode toggle ──
+const filterToggle = document.getElementById('filter-toggle');
+const labelMadgwick = document.getElementById('label-madgwick');
+const labelRtimu = document.getElementById('label-rtimu');
+
+filterToggle.addEventListener('change', () => {
+  const mode = filterToggle.checked ? 'rtimu' : 'madgwick';
+  send({cmd: 'set_filter', mode});
+});
+
+// ── Camera stream toggle ──
+let streaming = false;
+function toggleStream() {
+  streaming = !streaming;
+  send({cmd: 'camera_stream', enable: streaming});
+  const btn = document.getElementById('stream-btn');
+  btn.textContent = streaming ? 'Stop' : 'Stream';
+  btn.classList.toggle('danger', streaming);
+  btn.classList.toggle('primary', !streaming);
+}
+
+function updateFilterLabel(mode) {
+  const isRtimu = mode === 'rtimu';
+  filterToggle.checked = isRtimu;
+  labelMadgwick.classList.toggle('active', !isRtimu);
+  labelRtimu.classList.toggle('active', isRtimu);
+}
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+const canvas = document.getElementById('model-canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(200, 200);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 1000);
+camera.position.set(0, 0, 5);
+
+scene.add(new THREE.AmbientLight(0x404040, 2));
+const dirLight = new THREE.DirectionalLight(0x58a6ff, 3);
+dirLight.position.set(2, 3, 4);
+scene.add(dirLight);
+const backLight = new THREE.DirectionalLight(0x8b949e, 1.5);
+backLight.position.set(-2, -1, -3);
+scene.add(backLight);
+
+let stlMesh = null;
+
+new STLLoader().load('/astropi-case.stl', (geometry) => {
+  geometry.computeBoundingSphere();
+  geometry.center();
+  const material = new THREE.MeshPhongMaterial({
+    color: 0x58a6ff, specular: 0x222222, shininess: 40,
+  });
+  stlMesh = new THREE.Mesh(geometry, material);
+  // Auto-fit: position camera so model fills the view
+  const radius = geometry.boundingSphere.radius;
+  const fov = camera.fov * (Math.PI / 180);
+  const dist = radius / Math.sin(fov / 2);
+  camera.position.set(0, 0, dist * 1.1);
+  camera.updateProjectionMatrix();
+  stlMesh.matrixAutoUpdate = false;
+  scene.add(stlMesh);
+});
+
+// Receive the CSS-frame 3x3 rotation matrix from the existing code.
+// CSS frame: X=right, Y=down, Z=toward viewer
+// Three.js: X=right, Y=up, Z=toward viewer (Y is flipped)
+// Convert via F*M*F where F=diag(1,-1,1)
+window.updateModel = function(m) {
+  if (!stlMesh) return;
+  const e = stlMesh.matrix.elements;
+  e[0] =  m[0]; e[4] = -m[1]; e[8]  =  m[2]; e[12] = 0;
+  e[1] = -m[3]; e[5] =  m[4]; e[9]  = -m[5]; e[13] = 0;
+  e[2] =  m[6]; e[6] = -m[7]; e[10] =  m[8]; e[14] = 0;
+  e[3] =  0;    e[7] =  0;    e[11] =  0;    e[15] = 1;
+  stlMesh.matrix.decompose(stlMesh.position, stlMesh.quaternion, stlMesh.scale);
+  stlMesh.scale.set(1, 1, 1);  // keep unit scale — camera handles fit
+};
+
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Orientation Test Grid</title>
+<style>
+  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, sans-serif; margin: 20px; }
+  h1 { font-size: 1.2em; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 180px); gap: 20px; }
+  .cell { text-align: center; }
+  .cell .label { font-size: 0.8em; color: #8b949e; margin-bottom: 4px; }
+  .cell .sublabel { font-size: 0.65em; color: #58a6ff; font-family: monospace; }
+  .scene { perspective: 300px; width: 120px; height: 120px; margin: 8px auto; }
+  .cube { width: 120px; height: 120px; position: relative; transform-style: preserve-3d; }
+  .face { position: absolute; width: 120px; height: 120px; display: flex; align-items: center;
+          justify-content: center; font-size: 0.75em; font-weight: 600; border: 2px solid rgba(88,166,255,0.5); }
+  .front  { transform: translateZ(60px); background: rgba(88,166,255,0.15); color: #58a6ff; }
+  .back   { transform: rotateY(180deg) translateZ(60px); background: rgba(88,166,255,0.05); color: #58a6ff; }
+  .left   { transform: rotateY(-90deg) translateZ(60px); background: rgba(255,255,255,0.12); color: #ccc; }
+  .right  { transform: rotateY(90deg) translateZ(60px); background: rgba(88,166,255,0.05); color: #58a6ff; }
+  .top    { transform: rotateX(90deg) translateZ(60px); background: rgba(88,166,255,0.10); color: #58a6ff; }
+  .bottom { transform: rotateX(-90deg) translateZ(60px); background: rgba(0,0,0,0.4); color: #666; border-color: rgba(88,166,255,0.3); }
+</style>
+</head>
+<body>
+<h1>Orientation Test Grid — verify all 7 quaternions</h1>
+<div class="grid" id="grid"></div>
+<script>
+const C = Math.cos(22.5 * Math.PI / 180);
+const S = Math.sin(22.5 * Math.PI / 180);
+
+const tests = [
+  { label: "Home", q: [1, 0, 0, 0] },
+  { label: "Pitch +45°", sub: "front up (top away)", q: [C, 0, -S, 0] },
+  { label: "Pitch -45°", sub: "front down (top toward)", q: [C, 0, S, 0] },
+  { label: "Roll +45°", sub: "CW / right down", q: [C, 0, 0, -S] },
+  { label: "Roll -45°", sub: "CCW / left down", q: [C, 0, 0, S] },
+  { label: "Yaw +45°", sub: "CW from above", q: [C, S, 0, 0] },
+  { label: "Yaw -45°", sub: "CCW from above", q: [C, -S, 0, 0] },
+];
+
+function qToCSS(q) {
+  const [w, x, y, z] = q;
+  // R(q) standard quaternion rotation matrix
+  const r00 = 1 - 2*(y*y + z*z), r01 = 2*(x*y - w*z), r02 = 2*(x*z + w*y);
+  const r10 = 2*(x*y + w*z),     r11 = 1 - 2*(x*x + z*z), r12 = 2*(y*z - w*x);
+  const r20 = 2*(x*z - w*y),     r21 = 2*(y*z + w*x),     r22 = 1 - 2*(x*x + y*y);
+  // q_css = [w, -y, -x, -z] → proper rotation matrix (det=+1)
+  const c00=r11, c01=r10, c02=r12;
+  const c10=r01, c11=r00, c12=r02;
+  const c20=r21, c21=r20, c22=r22;
+  return [c00,c01,c02, c10,c11,c12, c20,c21,c22];
+}
+
+const grid = document.getElementById('grid');
+tests.forEach(t => {
+  const m = qToCSS(t.q);
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  const qStr = `[${t.q.map(v=>v.toFixed(3)).join(', ')}]`;
+  cell.innerHTML = `
+    <div class="label">${t.label}</div>
+    ${t.sub ? `<div class="sublabel">${t.sub}</div>` : '<div class="sublabel">&nbsp;</div>'}
+    <div class="scene">
+      <div class="cube" style="transform: matrix3d(
+        ${m[0]},${m[3]},${m[6]},0,
+        ${m[1]},${m[4]},${m[7]},0,
+        ${m[2]},${m[5]},${m[8]},0,
+        0,0,0,1)">
+        <div class="face front">Front</div>
+        <div class="face back">Back</div>
+        <div class="face left">Left</div>
+        <div class="face right">Right</div>
+        <div class="face top">Top</div>
+        <div class="face bottom">Bottom</div>
+      </div>
+    </div>
+    <div class="sublabel">${qStr}</div>
+  `;
+  grid.appendChild(cell);
+});
+</script>
+</body>
+</html>
