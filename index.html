@@ -104,6 +104,9 @@
       <svg class="sparkline" id="spark-humidity"><polyline stroke="var(--accent)"/></svg>
       <div class="reading"><span class="label">Pressure</span><span class="value" id="pressure">--<span class="unit">hPa</span></span></div>
       <svg class="sparkline" id="spark-pressure"><polyline stroke="var(--orange)"/></svg>
+      <div class="reading"><span class="label">Altitude</span><span class="value" id="altitude">--<span class="unit">m</span></span></div>
+      <svg class="sparkline" id="spark-altitude"><polyline stroke="var(--green)"/></svg>
+      <button class="btn" style="margin-top:4px;font-size:0.75em" onclick="send({cmd:'reset_altitude'})">Reset Alt</button>
     </div>
 
     <!-- Orientation with 3D -->
@@ -222,6 +225,8 @@
         <button class="btn preset-btn" data-preset="sparkle">Sparkle</button>
         <button class="btn preset-btn" data-preset="compass">Compass</button>
         <button class="btn preset-btn" data-preset="camera">Camera</button>
+        <button class="btn preset-btn" data-preset="flame">Flame</button>
+        <button class="btn preset-btn" data-preset="level">Level</button>
       </div>
       <div style="margin-top:10px">
         <button class="btn danger" onclick="stopPreset()">Stop Preset</button>
@@ -307,7 +312,7 @@ function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj))
 // ── Sparkline history ──
 const HISTORY_LEN = 60;
 const history = {
-  temp: [], humidity: [], pressure: [],
+  temp: [], humidity: [], pressure: [], altitude: [],
   'accel-x': [], 'accel-y': [], 'accel-z': [],
   'gyro-x': [], 'gyro-y': [], 'gyro-z': [],
   'mag-x': [], 'mag-y': [], 'mag-z': [],
@@ -326,13 +331,18 @@ function drawSparkline(svgId, series) {
   const w = svg.clientWidth || 260, h = svg.clientHeight || 30;
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   const polylines = svg.querySelectorAll('polyline');
+  // Shared min/max across all series so axes are comparable
+  let gMin = Infinity, gMax = -Infinity;
+  series.forEach(s => {
+    if (s.data.length < 2) return;
+    for (const v of s.data) { if (v < gMin) gMin = v; if (v > gMax) gMax = v; }
+  });
+  const range = gMax - gMin || 1;
   series.forEach((s, i) => {
     if (!polylines[i] || s.data.length < 2) return;
-    const min = Math.min(...s.data), max = Math.max(...s.data);
-    const range = max - min || 1;
     const points = s.data.map((v, j) => {
       const x = (j / (HISTORY_LEN - 1)) * w;
-      const y = h - 2 - ((v - min) / range) * (h - 4);
+      const y = h - 2 - ((v - gMin) / range) * (h - 4);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
     polylines[i].setAttribute('points', points);
@@ -349,6 +359,7 @@ function updateSensors(d) {
   setVal('temp', d.temperature);
   setVal('humidity', d.humidity);
   setVal('pressure', d.pressure);
+  if (d.altitude !== undefined) setVal('altitude', d.altitude);
   setVal('pitch', d.orientation.pitch);
   setVal('roll', d.orientation.roll);
   setVal('yaw', d.orientation.yaw);
@@ -405,6 +416,7 @@ function updateSensors(d) {
   pushHistory('temp', d.temperature);
   pushHistory('humidity', d.humidity);
   pushHistory('pressure', d.pressure);
+  if (d.altitude !== undefined) pushHistory('altitude', d.altitude);
   ['x','y','z'].forEach(a => {
     pushHistory(`accel-${a}`, d.accelerometer[a]);
     pushHistory(`gyro-${a}`, d.gyroscope[a]);
@@ -415,6 +427,7 @@ function updateSensors(d) {
   drawSparkline('spark-temp', [{data: history.temp}]);
   drawSparkline('spark-humidity', [{data: history.humidity}]);
   drawSparkline('spark-pressure', [{data: history.pressure}]);
+  drawSparkline('spark-altitude', [{data: history.altitude}]);
   drawSparkline('spark-accel', [
     {data: history['accel-x']}, {data: history['accel-y']}, {data: history['accel-z']}
   ]);

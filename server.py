@@ -467,6 +467,8 @@ _preset_task: asyncio.Task | None = None
 _scroll_task: asyncio.Task | None = None
 _scroll_gen = 0
 _latest_heading = 0.0  # updated by sensor loop
+_latest_pitch = 0.0    # +pitch = front down (degrees)
+_latest_roll = 0.0     # +roll = CW from front (degrees)
 _latest_mag = {"x": 0.0, "y": 0.0, "z": 0.0}  # calibrated mag from sensor loop
 _imu_paused = False  # set True when compass preset owns the IMU
 _scroll_lock = threading.Lock()
@@ -634,48 +636,51 @@ async def preset_compass():
     """Show compass needle pointing north on LED matrix.
 
     Hold the case flat with display/LEDs facing up, like a handheld compass.
-    Board axes when flat: +X = away from HDMI, +Y = right.
-    Display: row 0 = top (toward +X), col 7 = right (toward +Y).
+    Heading 0° = north. Needle red end points toward magnetic north.
     """
-    # Cardinal markers at edges (dim)
-    markers = {
-        (3, 0): [0, 0, 80], (4, 0): [0, 0, 80],   # N
-        (3, 7): [40, 40, 40], (4, 7): [40, 40, 40], # S
-        (7, 3): [40, 40, 40], (7, 4): [40, 40, 40], # E
-        (0, 3): [40, 40, 40], (0, 4): [40, 40, 40], # W
-    }
-    _compass_tick = 0
+    # Offset to align grid "up" (row 0) with physical north direction
+    # Adjust this if the needle is rotated from true north
+    GRID_NORTH_OFFSET = -180  # degrees — empirical offset to align with real compass
+
     while True:
-        heading_rad = math.radians(_latest_heading)
-        if _compass_tick % 10 == 0:
-            log.info("compass heading: %.1f°", _latest_heading)
-        _compass_tick += 1
-        dx = math.sin(heading_rad)
-        dy = math.cos(heading_rad)
+        # Heading relative to grid: where north is on the display
+        h = math.radians(-_latest_heading + GRID_NORTH_OFFSET)
+        # On the 8x8 grid: col+ = right, row+ = down
+        # Needle toward north: dx = how far right, dy = how far down
+        dx = math.sin(h)
+        dy = -math.cos(h)
 
         pixels = [[0, 0, 0]] * 64
 
-        # Cardinal markers
-        for (mx, my), col in markers.items():
-            pixels[my * 8 + mx] = col
+        # Draw needle from center
+        for t_int in range(1, 9):
+            t = t_int * 0.45
+            # North end (red)
+            pc = int(round(3.5 + dx * t))
+            pr = int(round(3.5 + dy * t))
+            if 0 <= pc < 8 and 0 <= pr < 8:
+                brightness = max(80, 255 - t_int * 20)
+                pixels[pr * 8 + pc] = [brightness, 0, 0]
+            # South end (dim white)
+            pc = int(round(3.5 - dx * t))
+            pr = int(round(3.5 - dy * t))
+            if 0 <= pc < 8 and 0 <= pr < 8:
+                pixels[pr * 8 + pc] = [60, 60, 60]
 
-        # North needle (red)
-        for t in range(1, 8):
-            px = int(round(3.5 + dx * t * 0.5))
-            py = int(round(3.5 + dy * t * 0.5))
-            if 0 <= px < 8 and 0 <= py < 8:
-                pixels[py * 8 + px] = [255, 0, 0]
-
-        # South tail (dim white)
-        for t in range(1, 6):
-            px = int(round(3.5 - dx * t * 0.5))
-            py = int(round(3.5 - dy * t * 0.5))
-            if 0 <= px < 8 and 0 <= py < 8:
-                pixels[py * 8 + px] = [100, 100, 100]
+        # Cardinal markers: N=blue, S/E/W=dim
+        # Place them based on actual compass directions
+        for bearing, color in [(0, [0, 0, 120]), (90, [40, 40, 40]),
+                                (180, [40, 40, 40]), (270, [40, 40, 40])]:
+            a = math.radians(-bearing + GRID_NORTH_OFFSET)
+            mc = int(round(3.5 + math.sin(a) * 3.5))
+            mr = int(round(3.5 - math.cos(a) * 3.5))
+            mc = max(0, min(7, mc))
+            mr = max(0, min(7, mr))
+            pixels[mr * 8 + mc] = color
 
         # Center dot
-        for cx, cy in [(3, 3), (3, 4), (4, 3), (4, 4)]:
-            pixels[cy * 8 + cx] = [60, 60, 60]
+        for cr, cc in [(3, 3), (3, 4), (4, 3), (4, 4)]:
+            pixels[cr * 8 + cc] = [40, 40, 40]
 
         sense.set_pixels(pixels)
         await asyncio.sleep(0.1)
@@ -715,6 +720,130 @@ async def preset_camera():
         cam.close()
 
 
+async def preset_flame():
+    """Classic doom-fire algorithm, rotated to follow gravity."""
+    # 10 rows tall (extra rows for better propagation), 8 wide
+    H, W = 10, 8
+    buf = [[0.0] * W for _ in range(H)]
+    sway_t = 0.0
+
+    def _fire_color(v):
+        v = max(0.0, min(1.0, v))
+        if v < 0.15:
+            return [int(v / 0.15 * 120), 0, 0]
+        elif v < 0.4:
+            f = (v - 0.15) / 0.25
+            return [120 + int(f * 135), int(f * 60), 0]
+        elif v < 0.65:
+            f = (v - 0.4) / 0.25
+            return [255, 60 + int(f * 140), 0]
+        elif v < 0.85:
+            f = (v - 0.65) / 0.2
+            return [255, 200 + int(f * 55), int(f * 60)]
+        else:
+            f = (v - 0.85) / 0.15
+            return [255, 255, 60 + int(f * 195)]
+
+    while True:
+        # Seed bottom row with hot spots (not uniform — gives shape)
+        for x in range(W):
+            dist = abs(x - 3.5) / 3.5  # 0=center, 1=edge
+            if dist < 0.5:
+                buf[H - 1][x] = 0.8 + random.random() * 0.2
+            elif dist < 0.8:
+                buf[H - 1][x] = random.random() * 0.7
+            else:
+                buf[H - 1][x] = random.random() * 0.2
+
+        # Propagate fire upward: each cell pulls from below with random spread
+        sway_t += 1
+        for y in range(H - 1):
+            for x in range(W):
+                # Sample from row below with random horizontal offset (flicker)
+                spread = random.randint(-1, 1)
+                # Add sway that increases with height
+                height_ratio = 1.0 - y / (H - 1)
+                sway_offset = math.sin(sway_t * 0.15 + y * 0.5) * height_ratio * 1.5
+                src_x = x + spread + round(sway_offset)
+                src_x = max(0, min(W - 1, src_x))
+                # Cool as it rises — more cooling near top
+                cooling = random.random() * 0.15 + 0.02 + height_ratio * 0.05
+                buf[y][x] = max(0.0, buf[y + 1][src_x] - cooling)
+
+        # Use Madgwick orientation (same proven system as 3D model and level)
+        roll_rad = math.radians(-_latest_roll)   # negated, same as level preset
+        pitch_rad = math.radians(_latest_pitch)
+
+        cos_r = math.cos(roll_rad)
+        sin_r = math.sin(roll_rad)
+        # Pitch shifts flame base up/down on display
+        pitch_shift = pitch_rad * (H - 1) / 2.0
+        cx, cy = 3.5, 3.5
+
+        # Render: for each LED pixel, find where it maps in flame buffer
+        pixels = [[0, 0, 0]] * 64
+        for row in range(8):
+            for col in range(8):
+                dx = col - cx
+                dy = row - cy
+                # Rotate into flame space by roll, shift by pitch
+                fx = dx * cos_r + dy * sin_r + cx
+                fy = -dx * sin_r + dy * cos_r + cy + pitch_shift
+                # Map to buffer (grid is 8 tall, buffer is H tall)
+                by = int(fy * (H - 1) / 7.0)
+                bx = int(fx)
+                if 0 <= bx < W and 0 <= by < H:
+                    v = buf[by][bx]
+                    if v > 0.01:
+                        pixels[row * 8 + col] = _fire_color(v)
+
+        sense.set_pixels(pixels)
+        await asyncio.sleep(0.06)
+
+
+async def preset_level():
+    """Horizon line using Madgwick orientation. For axis debugging."""
+    while True:
+        # +roll = CW from front (degrees), +pitch = front down (degrees)
+        roll_rad = math.radians(-_latest_roll)
+        pitch_rad = math.radians(_latest_pitch)
+
+        # Roll rotates the line, pitch shifts it up/down
+        # Line is horizontal when level; roll tilts it
+        cos_r = math.cos(roll_rad)
+        sin_r = math.sin(roll_rad)
+        # Pitch offset: positive pitch (front down) → line moves up on display
+        pitch_offset = pitch_rad * 3.5  # scale to grid units
+
+        cx, cy = 3.5, 3.5
+        pixels = [[0, 0, 0]] * 64
+        for row in range(8):
+            for col in range(8):
+                dx = col - cx
+                dy = row - cy
+                # Distance from horizon line (rotated by roll, shifted by pitch)
+                dist = -dx * sin_r + dy * cos_r + pitch_offset
+
+                if abs(dist) < 0.7:
+                    pixels[row * 8 + col] = [0, 255, 0]
+                elif abs(dist) < 1.3:
+                    pixels[row * 8 + col] = [0, 60, 0]
+
+                # Sky vs ground: blue above, brown below
+                if abs(dist) >= 1.3:
+                    if dist < 0:
+                        pixels[row * 8 + col] = [0, 0, 30]   # sky
+                    else:
+                        pixels[row * 8 + col] = [30, 15, 0]   # ground
+
+                # Center reference dot
+                if abs(dx) < 0.6 and abs(dy) < 0.6:
+                    pixels[row * 8 + col] = [255, 0, 0]
+
+        sense.set_pixels(pixels)
+        await asyncio.sleep(0.05)
+
+
 PRESETS = {
     "rainbow": preset_rainbow,
     "heatmap": preset_heatmap,
@@ -722,6 +851,8 @@ PRESETS = {
     "sparkle": preset_sparkle,
     "compass": preset_compass,
     "camera": preset_camera,
+    "flame": preset_flame,
+    "level": preset_level,
 }
 
 # ── Sensor reading ───────────────────────────────────────────────────
@@ -745,6 +876,45 @@ def tilt_compensated_heading(q, mag):
     if heading < 0:
         heading += 360
     return round(heading, 1)
+
+
+# ── Barometric altitude ──────────────────────────────────────────────
+
+_ref_pressure = None  # hPa — set on first reading or reset
+
+
+def _pressure_to_altitude(pressure_hpa):
+    """Relative altitude in meters from reference pressure using hypsometric formula."""
+    global _ref_pressure
+    if _ref_pressure is None:
+        _ref_pressure = pressure_hpa
+    # Standard temperature 15°C = 288.15K, lapse rate 0.0065 K/m
+    if pressure_hpa <= 0 or _ref_pressure <= 0:
+        return 0.0
+    return 44330.0 * (1.0 - (pressure_hpa / _ref_pressure) ** 0.1903)
+
+
+def reset_altitude():
+    """Reset reference pressure to current reading."""
+    global _ref_pressure
+    _ref_pressure = None
+    log.info("Altitude reference reset")
+
+
+# ── Environment sensor smoothing ─────────────────────────────────────
+
+ENV_EMA_ALPHA = 0.1  # slower smoothing for temp/humidity/pressure
+
+_env_smooth = {"temperature": None, "humidity": None, "pressure": None}
+
+
+def smooth_env(name, raw_value):
+    """Apply EMA smoothing to environment sensor readings."""
+    if _env_smooth[name] is None:
+        _env_smooth[name] = raw_value
+    else:
+        _env_smooth[name] = ENV_EMA_ALPHA * raw_value + (1 - ENV_EMA_ALPHA) * _env_smooth[name]
+    return _env_smooth[name]
 
 
 # ── Accelerometer display smoothing ──────────────────────────────────
@@ -780,7 +950,7 @@ def update_filter():
 
 def read_sensors() -> dict:
     """Read all Sense HAT sensors and return as dict."""
-    global _latest_heading, _latest_mag
+    global _latest_heading, _latest_mag, _latest_pitch, _latest_roll
     if filter_mode == "test":
         global _test_current, _test_last_switch
         now = time.time()
@@ -843,6 +1013,8 @@ def read_sensors() -> dict:
         roll = round(-math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))), 1)
         yaw = round(math.degrees(math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))), 1)
         _latest_heading = yaw
+        _latest_pitch = pitch
+        _latest_roll = roll
     else:
         # Custom Madgwick MARG filter
         accel, gyro, mag = update_filter()
@@ -854,17 +1026,25 @@ def read_sensors() -> dict:
         roll = round(-math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))), 1)
         yaw = tilt_compensated_heading(ahrs.q, mag)
         _latest_heading = yaw
+        _latest_pitch = pitch
+        _latest_roll = roll
         matrix = ahrs.css_matrix()
 
     accel_display = smooth_accel(accel)
     _poll_joystick()
 
+    temperature = smooth_env("temperature", sense.get_temperature())
+    humidity = smooth_env("humidity", sense.get_humidity())
+    pressure = smooth_env("pressure", sense.get_pressure())
+    altitude = _pressure_to_altitude(pressure)
+
     return {
         "type": "sensors",
         "timestamp": time.time(),
-        "temperature": round(sense.get_temperature(), 1),
-        "humidity": round(sense.get_humidity(), 1),
-        "pressure": round(sense.get_pressure(), 1),
+        "temperature": round(temperature, 1),
+        "humidity": round(humidity, 1),
+        "pressure": round(pressure, 1),
+        "altitude": round(altitude, 2),
         "orientation": {
             "pitch": pitch,
             "roll": roll,
@@ -1049,6 +1229,9 @@ async def handle_command(data: dict):
             if mode == "rtimu":
                 _rtimu_ref_q = None  # Re-capture reference on next read
             log.info("Filter mode set to: %s", filter_mode)
+
+    elif cmd == "reset_altitude":
+        reset_altitude()
 
     elif cmd == "camera_grab":
         await _cancel_cam_stream()

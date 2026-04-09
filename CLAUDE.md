@@ -21,11 +21,15 @@ Real-time sensor fusion dashboard for Raspberry Pi Sense HAT. A Python WebSocket
 
 **Server threading:** `broadcast_sensors()` async loop reads IMU at 20Hz, runs the Madgwick filter, and sends JSON to all clients at 10Hz. HTTP server runs in a background `threading.Thread`. LED presets and text scrolling use cancellable async tasks.
 
-**WebSocket commands** (browser→server): `set_pixel`, `set_pixels`, `clear`, `scroll_text`, `preset`, `stop_preset`, `set_filter` (mode: `madgwick`/`rtimu`/`test`), `camera_grab`, `camera_stream` (enable: true/false).
+**WebSocket commands** (browser→server): `set_pixel`, `set_pixels`, `clear`, `scroll_text`, `preset`, `stop_preset`, `set_filter` (mode: `madgwick`/`rtimu`/`test`), `camera_grab`, `camera_stream` (enable: true/false), `reset_altitude`.
 
 **Camera recording:** The dashboard Record button captures the MJPEG stream to video using `MediaRecorder` with a hidden canvas fed by `captureStream(10)`. Format auto-detects: MP4 on Edge/Safari, WebM on Chrome/Firefox. Recording is purely client-side — no server changes needed.
 
-**WebSocket messages** (server→browser): `sensors` (10Hz sensor data with button/joystick state), `led_update` (pixel array during camera preset), `camera_frame` (base64 JPEG for camera panel).
+**WebSocket messages** (server→browser): `sensors` (10Hz sensor data with button/joystick state, barometric altitude), `led_update` (pixel array during camera preset), `camera_frame` (base64 JPEG for camera panel).
+
+**Environment smoothing:** Temperature, humidity, and pressure use EMA smoothing (alpha=0.1) to reduce noise. Altitude is derived from smoothed pressure via the hypsometric formula, relative to a resettable reference pressure.
+
+**Sparklines:** Multi-axis sparklines (accel, gyro, mag) use shared min/max scaling so axes are directly comparable.
 
 **GPIO Buttons (AstroPi flight case):** 6 buttons — top group (top=GPIO26, bottom=GPIO13, left=GPIO20, right=GPIO19) and bottom pair (A=GPIO16, B=GPIO21). A hold-2s triggers shutdown, B hold-2s triggers reboot. All button and joystick states stream in the `sensors` message at 10Hz.
 
