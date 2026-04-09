@@ -2,7 +2,7 @@
 
 Real-time sensor fusion dashboard for Raspberry Pi Sense HAT. A Python WebSocket server reads 9-DOF IMU data, runs a Madgwick AHRS quaternion filter, and streams orientation and sensor data to a browser dashboard with a live 3D model of the AstroPi flight case.
 
-![Architecture: server.py on Pi streams to browser via WebSocket]
+![astropi.jpg](astropi.jpg)
 
 ## Features
 
