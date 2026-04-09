@@ -15,6 +15,7 @@ Real-time sensor fusion dashboard for Raspberry Pi Sense HAT. A Python WebSocket
 - `run.sh` — Launcher script on Pi (activates venv, runs server.py)
 - `test_grid.html` — Standalone LED grid test page
 - `diag_axes.py` / `diag_gyro.py` — Sensor axis mapping diagnostics (run on Pi)
+- `sensor-view.service` — systemd unit file for autostart on boot
 
 **Communication:** HTTP on port 8080 (serves static files via `SimpleHTTPRequestHandler` in a daemon thread), WebSocket on port 8081 (sensor data at 10Hz, commands from browser).
 
@@ -22,7 +23,11 @@ Real-time sensor fusion dashboard for Raspberry Pi Sense HAT. A Python WebSocket
 
 **WebSocket commands** (browser→server): `set_pixel`, `set_pixels`, `clear`, `scroll_text`, `preset`, `stop_preset`, `set_filter` (mode: `madgwick`/`rtimu`/`test`), `camera_grab`, `camera_stream` (enable: true/false).
 
-**WebSocket messages** (server→browser): `sensors` (10Hz sensor data), `led_update` (pixel array during camera preset), `camera_frame` (base64 JPEG for camera panel).
+**WebSocket messages** (server→browser): `sensors` (10Hz sensor data with button/joystick state), `led_update` (pixel array during camera preset), `camera_frame` (base64 JPEG for camera panel).
+
+**GPIO Buttons (AstroPi flight case):** 6 buttons — top group (top=GPIO26, bottom=GPIO13, left=GPIO20, right=GPIO19) and bottom pair (A=GPIO16, B=GPIO21). A hold-2s triggers shutdown, B hold-2s triggers reboot. All button and joystick states stream in the `sensors` message at 10Hz.
+
+**Joystick:** Sense HAT 5-way joystick (up/down/left/right/middle) polled via `get_events()`. Directions are remapped to compensate for the 270° board rotation (`_joy_remap`).
 
 ## Sensor Fusion Pipeline
 
@@ -53,6 +58,8 @@ The orientation card uses Three.js (v0.170.0, loaded via importmap from CDN) wit
 
 Python packages (installed in `~/venv`): `websockets`, `sense-hat`, `picamera2`, `pillow`
 
+System package (pre-installed on Pi OS): `gpiozero` (used for flight case buttons)
+
 ## Deployment
 
 ```bash
@@ -62,8 +69,15 @@ scp server.py index.html astropi-case.stl astropi:~/projects/sensor-view/
 # Start on Pi (activates ~/venv, runs server.py)
 ssh astropi '~/projects/sensor-view/run.sh'
 
-# Or manually
-ssh astropi 'pkill -f server.py; sleep 1; ~/projects/sensor-view/run.sh'
+# Or via systemd (preferred — service autostarts on boot)
+ssh astropi 'sudo systemctl restart sensor-view'
+```
+
+**Systemd service:** `sensor-view.service` is installed at `/etc/systemd/system/`. Manages autostart, restart-on-failure (10s delay), and clean shutdown.
+
+```bash
+ssh astropi 'sudo systemctl status sensor-view'    # check status
+ssh astropi 'journalctl -u sensor-view -f'          # tail logs
 ```
 
 Pi uses externally-managed Python (PEP 668) — always use the venv at `~/venv` for pip/python3.
@@ -89,3 +103,6 @@ ssh astropi '~/venv/bin/python3 ~/projects/sensor-view/diag_gyro.py'
 - **picamera2 BGR output**: `capture_array()` returns BGR despite `RGB888` format string. Always swap channels: `arr[:, :, ::-1]`. The camera is mounted sideways in the flight case — apply `rotate(-90)` for the browser panel, `rotate(270)` for the 8x8 LED grid.
 - **Camera resource contention**: Only one picamera2 instance can be open at a time. The camera preset (LEDs) and camera panel (stream/grab) each open and close their own instance. Starting one while the other is active will fail — cancel the preset before using the panel, and vice versa.
 - **Magnetometer calibration**: Hard-iron offsets stored in `mag_cal.json` on Pi. Use `--recalibrate` flag to force fresh calibration.
+- **IMU init race on boot**: The IMU sometimes fails to initialize immediately after boot. Server has retry logic (5 attempts, 3s apart) that recreates the `SenseHat` instance on each retry.
+- **Joystick rotation**: `sense.set_rotation(270)` affects joystick directions. Physical directions are remapped via `_joy_remap` dict to match the dashboard display.
+- **GPIO button pins**: The official AstroPi flight case pinout doesn't match the physical labels intuitively. Actual mapping was determined empirically: A=GPIO16, B=GPIO21, left=GPIO20, right=GPIO19 (left/right are swapped vs the official docs).

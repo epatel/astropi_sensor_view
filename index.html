@@ -225,6 +225,54 @@
         <button class="btn danger" onclick="stopPreset()">Stop Preset</button>
       </div>
     </div>
+
+    <!-- Buttons & Joystick -->
+    <div class="card">
+      <h3>Buttons &amp; Joystick</h3>
+      <div style="display:flex;gap:24px;justify-content:center;align-items:start;flex-wrap:wrap">
+        <!-- 6 GPIO Buttons -->
+        <div>
+          <div style="color:var(--muted);font-size:0.7em;text-align:center;margin-bottom:6px">Top group</div>
+          <div style="display:grid;grid-template-columns:32px 32px 32px;grid-template-rows:32px 32px 32px;gap:3px;justify-content:center">
+            <div></div>
+            <div id="btn-top" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">T</div>
+            <div></div>
+            <div id="btn-left" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">L</div>
+            <div></div>
+            <div id="btn-right" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">R</div>
+            <div></div>
+            <div id="btn-bottom" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">B</div>
+            <div></div>
+          </div>
+          <div style="display:flex;gap:6px;justify-content:center;margin-top:8px">
+            <div style="text-align:center">
+              <div id="btn-a" style="width:32px;height:32px;border-radius:50%;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s"></div>
+              <span style="color:var(--muted);font-size:0.65em">A</span>
+            </div>
+            <div style="text-align:center">
+              <div id="btn-b" style="width:32px;height:32px;border-radius:50%;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s"></div>
+              <span style="color:var(--muted);font-size:0.65em">B</span>
+            </div>
+          </div>
+          <div style="color:var(--muted);font-size:0.6em;text-align:center;margin-top:4px">A/B hold 2s: off/reboot</div>
+        </div>
+        <!-- Joystick -->
+        <div>
+          <div style="color:var(--muted);font-size:0.7em;text-align:center;margin-bottom:6px">Joystick</div>
+          <div style="display:grid;grid-template-columns:32px 32px 32px;grid-template-rows:32px 32px 32px;gap:3px;justify-content:center">
+            <div></div>
+            <div id="joy-up" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">U</div>
+            <div></div>
+            <div id="joy-left" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">L</div>
+            <div id="joy-middle" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">M</div>
+            <div id="joy-right" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">R</div>
+            <div></div>
+            <div id="joy-down" style="border-radius:6px;border:2px solid var(--muted);background:var(--surface);transition:background 0.1s;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.65em">D</div>
+            <div></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -307,6 +355,19 @@ function updateSensors(d) {
   setVal('mag-x', d.magnetometer.x);
   setVal('mag-y', d.magnetometer.y);
   setVal('mag-z', d.magnetometer.z);
+
+  // Update button & joystick indicators
+  if (d.buttons) {
+    for (const name of ['top','bottom','left','right','a','b']) {
+      const el = document.getElementById('btn-' + name);
+      if (el) el.style.background = d.buttons[name] ? (name === 'a' ? 'var(--red)' : name === 'b' ? 'var(--orange)' : 'var(--accent)') : 'var(--surface)';
+    }
+  }
+  if (d.joystick) {
+    for (const dir of ['up','down','left','right','middle']) {
+      document.getElementById('joy-' + dir).style.background = d.joystick[dir] ? 'var(--accent)' : 'var(--surface)';
+    }
+  }
 
   // Update filter mode toggle from server state
   if (d.filter_mode) updateFilterLabel(d.filter_mode);

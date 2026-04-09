@@ -17,9 +17,12 @@ from pathlib import Path
 import base64
 import io as _io
 
+import subprocess
+
 import websockets
 from PIL import Image
 from sense_hat import SenseHat
+from gpiozero import Button
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("astropi")
@@ -359,7 +362,19 @@ def apply_mag_calibration(raw_mag: dict, cal: dict) -> dict:
 
 
 ahrs = MadgwickFilter(beta=0.3)
-ahrs.calibrate_gyro()
+for _attempt in range(5):
+    try:
+        ahrs.calibrate_gyro()
+        break
+    except OSError:
+        log.warning("IMU init failed, retrying in 3s... (%d/5)", _attempt + 1)
+        time.sleep(3)
+        sense = SenseHat()
+        sense.low_light = True
+        sense.set_rotation(270)
+else:
+    log.error("IMU init failed after 5 attempts, exiting")
+    sys.exit(1)
 
 # Magnetometer calibration
 if "--recalibrate" in sys.argv:
@@ -842,6 +857,7 @@ def read_sensors() -> dict:
         matrix = ahrs.css_matrix()
 
     accel_display = smooth_accel(accel)
+    _poll_joystick()
 
     return {
         "type": "sensors",
@@ -868,6 +884,8 @@ def read_sensors() -> dict:
             "y": round(mag["y"], 1),
             "z": round(mag["z"], 1),
         },
+        "buttons": {name: btn.is_pressed for name, btn in _gpio_buttons.items()},
+        "joystick": dict(_joystick_state),
     }
 
 
@@ -1084,6 +1102,63 @@ def start_http_server(host, port):
     httpd = HTTPServer((host, port), handler)
     log.info("HTTP server at http://%s:%d", host, port)
     httpd.serve_forever()
+
+
+# ── Joystick & GPIO Buttons ──────────────────────────────────────────
+
+_joystick_state = {"up": False, "down": False, "left": False, "right": False, "middle": False}
+
+
+# Joystick direction remapping for 270° board rotation
+_joy_remap = {"up": "right", "down": "left", "left": "up", "right": "down", "middle": "middle"}
+
+
+def _poll_joystick():
+    """Drain joystick events and update state. Call from sensor loop."""
+    for k in _joystick_state:
+        _joystick_state[k] = False
+    for event in sense.stick.get_events():
+        mapped = _joy_remap.get(event.direction)
+        if mapped:
+            _joystick_state[mapped] = (event.action != sense.stick.STATE_RELEASE)
+
+# AstroPi flight case: 6 buttons
+# Top group: top=GPIO26, bottom=GPIO13, left=GPIO20, right=GPIO19
+# Bottom pair: A=GPIO16, B=GPIO21
+_gpio_buttons = {
+    "top": Button(26),
+    "bottom": Button(13),
+    "left": Button(20),
+    "right": Button(19),
+    "a": Button(16, hold_time=2),
+    "b": Button(21, hold_time=2),
+}
+
+_shutdown_triggered = False
+
+
+def _button_shutdown(reboot=False):
+    """Scroll a message on the LED matrix, then shutdown or reboot."""
+    global _shutdown_triggered, _scroll_gen
+    if _shutdown_triggered:
+        return
+    _shutdown_triggered = True
+
+    action = "Rebooting..." if reboot else "Shutting down..."
+    cmd = ["sudo", "shutdown", "-Fr", "now"] if reboot else ["sudo", "shutdown", "-Fh", "now"]
+
+    log.info("Button pressed: %s", action)
+    _scroll_gen += 1
+    with _scroll_lock:
+        sense.show_message(action, text_colour=[255, 100, 0], scroll_speed=0.06)
+        sense.clear()
+
+    subprocess.run(cmd)
+
+
+_gpio_buttons["a"].when_held = lambda: _button_shutdown(reboot=False)
+_gpio_buttons["b"].when_held = lambda: _button_shutdown(reboot=True)
+log.info("GPIO buttons: 6 configured (A=shutdown, B=reboot)")
 
 
 # ── Main ─────────────────────────────────────────────────────────────
