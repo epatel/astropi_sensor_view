@@ -13,7 +13,7 @@ Real-time sensor fusion dashboard for Raspberry Pi Sense HAT. A Python WebSocket
 - **LED pixel painter** -- draw on the 8x8 LED matrix from the browser
 - **Text scroller** -- send scrolling messages to the LED display with color/speed controls
 - **Presets** -- rainbow, heatmap, snake, sparkle, compass animations
-- **Camera** -- live Pi camera stream to browser, single frame grab, and camera-to-LED preset that displays the camera feed on the 8x8 matrix
+- **Camera** -- live Pi camera stream to browser, single frame grab, video recording (MP4/WebM), and camera-to-LED preset that displays the camera feed on the 8x8 matrix
 - **Filter modes** -- toggle between Madgwick (custom IMU-only), RTIMULib (built-in fusion), and test mode
 - **Buttons & joystick** -- live status of all 6 flight case GPIO buttons and 5-way joystick; buttons A/B trigger shutdown/reboot on 2s hold
 

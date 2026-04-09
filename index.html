@@ -207,7 +207,9 @@
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn" onclick="send({cmd:'camera_grab'})">Grab</button>
         <button class="btn primary" id="stream-btn" onclick="toggleStream()">Stream</button>
+        <button class="btn" id="record-btn" onclick="toggleRecord()">Record</button>
       </div>
+      <canvas id="record-canvas" style="display:none"></canvas>
     </div>
 
     <!-- Presets -->
@@ -291,7 +293,11 @@ function connect() {
     const d = JSON.parse(e.data);
     if (d.type === 'sensors') updateSensors(d);
     if (d.type === 'led_update') updateLedGrid(d.pixels);
-    if (d.type === 'camera_frame') document.getElementById('camera-img').src = 'data:image/jpeg;base64,' + d.data;
+    if (d.type === 'camera_frame') {
+      const src = 'data:image/jpeg;base64,' + d.data;
+      document.getElementById('camera-img').src = src;
+      if (_recording) _drawRecordFrame(src);
+    }
   };
 }
 connect();
@@ -540,6 +546,60 @@ function toggleStream() {
   btn.textContent = streaming ? 'Stop' : 'Stream';
   btn.classList.toggle('danger', streaming);
   btn.classList.toggle('primary', !streaming);
+}
+
+// ── Camera recording ──
+let _recording = false;
+let _mediaRecorder = null;
+let _recordChunks = [];
+const _recCanvas = document.getElementById('record-canvas');
+const _recCtx = _recCanvas.getContext('2d');
+
+function _drawRecordFrame(src) {
+  const img = new Image();
+  img.onload = () => {
+    if (!_recording) return;
+    if (_recCanvas.width !== img.width || _recCanvas.height !== img.height) {
+      _recCanvas.width = img.width;
+      _recCanvas.height = img.height;
+    }
+    _recCtx.drawImage(img, 0, 0);
+  };
+  img.src = src;
+}
+
+function toggleRecord() {
+  const btn = document.getElementById('record-btn');
+  if (!_recording) {
+    if (!streaming) toggleStream();
+    _recordChunks = [];
+    const stream = _recCanvas.captureStream(10);
+    // Prefer MP4 (Safari), fall back to WebM (Chrome/Firefox)
+    const types = ['video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+    const ext = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+    _mediaRecorder = new MediaRecorder(stream, { mimeType });
+    _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _recordChunks.push(e.data); };
+    _mediaRecorder.onstop = () => {
+      const blob = new Blob(_recordChunks, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'astropi-' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.' + ext;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    _mediaRecorder.start(100);
+    _recording = true;
+    btn.textContent = 'Stop Rec';
+    btn.classList.add('danger');
+  } else {
+    _recording = false;
+    _mediaRecorder.stop();
+    _mediaRecorder = null;
+    btn.textContent = 'Record';
+    btn.classList.remove('danger');
+  }
 }
 
 function updateFilterLabel(mode) {

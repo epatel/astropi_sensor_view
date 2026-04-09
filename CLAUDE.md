@@ -23,6 +23,8 @@ Real-time sensor fusion dashboard for Raspberry Pi Sense HAT. A Python WebSocket
 
 **WebSocket commands** (browser→server): `set_pixel`, `set_pixels`, `clear`, `scroll_text`, `preset`, `stop_preset`, `set_filter` (mode: `madgwick`/`rtimu`/`test`), `camera_grab`, `camera_stream` (enable: true/false).
 
+**Camera recording:** The dashboard Record button captures the MJPEG stream to video using `MediaRecorder` with a hidden canvas fed by `captureStream(10)`. Format auto-detects: MP4 on Edge/Safari, WebM on Chrome/Firefox. Recording is purely client-side — no server changes needed.
+
 **WebSocket messages** (server→browser): `sensors` (10Hz sensor data with button/joystick state), `led_update` (pixel array during camera preset), `camera_frame` (base64 JPEG for camera panel).
 
 **GPIO Buttons (AstroPi flight case):** 6 buttons — top group (top=GPIO26, bottom=GPIO13, left=GPIO20, right=GPIO19) and bottom pair (A=GPIO16, B=GPIO21). A hold-2s triggers shutdown, B hold-2s triggers reboot. All button and joystick states stream in the `sensors` message at 10Hz.
